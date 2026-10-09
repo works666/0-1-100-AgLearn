@@ -1,12 +1,13 @@
 # DeepSeek 聊天示例
 
-一个使用 Python 和 OpenAI Python SDK 兼容接口调用 DeepSeek Chat Completions API 的入门示例。程序发送一条简单的问候消息，并打印完整响应和助手回复。
+一个使用 Python 和 OpenAI Python SDK 兼容接口调用 DeepSeek Chat Completions API 的入门示例。运行后输入一条消息，程序会显示助手的回复。
 
 ## 功能
 
 - 使用 `.env` 文件在本地配置 API Key
 - 调用 `deepseek-flash` 模型
-- 展示完整 API 响应及回复正文
+- 从命令行读取用户输入，并显示助手回复
+- 对空输入、请求超时、认证失败、服务端错误和请求频率或额度超限提供提示
 
 ## 环境要求
 
@@ -74,6 +75,8 @@ DEEPSEEK_KEY=your-deepseek-api-key
 python main.py
 ```
 
+程序提示 `You:` 后，输入消息并按 Enter。输入空内容或纯空白内容时，程序会提示输入不能为空并退出。
+
 程序会向 DeepSeek API 发送请求，因此需要可用的网络连接和有效的 API Key。API 使用可能产生费用，请查看服务商的账户和计费设置。
 
 ## 配置说明
@@ -84,6 +87,16 @@ python main.py
 2. 变量名准确为 `DEEPSEEK_KEY`；
 3. 等号右侧已填写有效密钥；
 4. 当前进程没有设置为空的同名环境变量（`load_dotenv()` 默认不会覆盖已存在的环境变量）。
+
+## 错误提示
+
+请求过程中，程序会针对以下错误显示提示并退出：
+
+- 请求超时：请稍后重试。
+- 认证失败：请检查 API Key 是否正确。
+- 服务端错误：请稍后重试。
+- 请求频率或额度超限：请稍后重试或检查账户额度。
+- 其他未预期错误：显示错误信息，便于排查。
 
 ## 安全提示
 
