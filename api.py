@@ -1,16 +1,23 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel,field_validator
 from main import generate_response
-from pathlib import Path
-from KeyWord_Search import search_files
+# from pathlib import Path
+from vector_search import load_vector_index, retrieve
 from dotenv import load_dotenv
 import os
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_vector_index()
+    yield
+
+app = FastAPI(lifespan=lifespan)  
+
 class AskRequest(BaseModel):
     question: str
-    keyword: str
 
-    @field_validator('question', 'keyword')#要检验的值，自动调用下面的函数
+    @field_validator('question')#要检验的值，自动调用下面的函数
     @classmethod
     def not_empty(cls, value):#检查输入是否为空，如果为空则抛出 ValueError 异常
       
@@ -32,13 +39,31 @@ def ask(request: AskRequest):
             "answer": None,
             "sources": [],
         }
-    information = search_files(Path(__file__).parent / "data", request.keyword)  # 调用 search_files 函数，传入文件夹路径和搜索关键词，返回搜索结果
-    if information == "无资料":
-         return {
-            "message": "没有找到相关资料，请尝试其他关键词。",
+   
+    try:
+        results = retrieve(request.question, top_k=3)
+    except Exception as e:
+        return {
+            "message": f"检索过程中发生错误: {e}",
             "answer": None,
             "sources": [],
         }
+    information = "\n\n".join(
+      (
+        f"[来源：{item['source']}"
+        f"{f'，第 {item['page']} 页' if item['page'] is not None else ''}]\n"
+        f"{item['text']}"
+     )
+    for item in results
+)
+    sources = [
+        {
+            "chunk_id": item["chunk_id"],
+            "filename": item["source"],
+            "page": item["page"],
+        }
+        for item in results
+    ]
     try:
         answer = generate_response(request.question, information, api_key)
     except Exception as e:
@@ -50,6 +75,6 @@ def ask(request: AskRequest):
     return {
         "message": "成功获取回答。",
         "answer": answer,
-        "sources": information,
+        "sources": sources,
     }
 

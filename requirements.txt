@@ -3,3 +3,5 @@ python-dotenv
 fastapi
 pydantic
 uvicorn[standard]
+pypdf
+sentence-transformers

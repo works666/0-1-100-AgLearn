@@ -103,3 +103,13 @@ python main.py
 - 不要提交 `.env` 或任何包含密钥的文件。
 - `.gitignore` 不能撤销已提交文件中的密钥。如果密钥曾经公开或提交，请先在服务商处撤销并更换，再从 Git 跟踪中移除该文件。
 - `.env` 是明文配置文件，不是加密存储；请限制对本机账户和文件的访问。
+
+## 文档提取与切分
+
+将 `.txt` 和 `.pdf` 资料放入项目根目录下的 `data` 文件夹，然后运行：
+
+```powershell
+python ingest_documents.py
+```
+
+脚本按 UTF-8 读取 TXT，逐页提取 PDF 文本，并将约 500 字的文本块写入 `chunks.jsonl`。每条记录包含唯一的 `chunk_id`、文本 `text`、来源文件名 `source` 和页码 `page`；TXT 的页码为 `null`。PDF 若没有可提取文本会报错；扫描版 PDF 需要先 OCR。

@@ -20,7 +20,7 @@ def generate_response(user_message, information, api_key):
     response = client.chat.completions.create(
         model="deepseek-flash",
         messages=[
-            {"role": "system", "content": "依据提供的资料回答；资料不足时说明不足；不要把没有出现在资料中的内容说成资料结论，并在回答后说明你参考的资料来源。"},
+            {"role": "system", "content": "依据提供的资料回答；资料不足时说明不足；不要把没有出现在资料中的内容说成资料结论，在每一条的回答中提出根据哪一个chunk_id得到的，也就是来源是什么。"},
             {"role": "user", "content": user_message},
         ],
         stream=False,
