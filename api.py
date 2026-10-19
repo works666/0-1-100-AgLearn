@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel,field_validator
-from main import generate_response
+from main import generate_rag_response
 # from pathlib import Path
 from vector_search import load_vector_index, retrieve
 from dotenv import load_dotenv
@@ -41,21 +41,13 @@ def ask(request: AskRequest):
         }
    
     try:
-        results = retrieve(request.question, top_k=3)
+        answer, results,tool_call_records = generate_rag_response(request.question, api_key)
     except Exception as e:
         return {
-            "message": f"检索过程中发生错误: {e}",
+            "message": f"Tool Calling 问答过程中发生错误: {e}",
             "answer": None,
             "sources": [],
         }
-    information = "\n\n".join(
-      (
-        f"[来源：{item['source']}"
-        f"{f'，第 {item['page']} 页' if item['page'] is not None else ''}]\n"
-        f"{item['text']}"
-     )
-    for item in results
-)
     sources = [
         {
             "chunk_id": item["chunk_id"],
@@ -63,18 +55,11 @@ def ask(request: AskRequest):
             "page": item["page"],
         }
         for item in results
-    ]
-    try:
-        answer = generate_response(request.question, information, api_key)
-    except Exception as e:
-        return {
-            "message": f"模型请求回答发生错误: {e}",
-            "answer": None,
-            "sources": [],
-        }
+        ]
     return {
         "message": "成功获取回答。",
         "answer": answer,
         "sources": sources,
+        "tool_calls": tool_call_records,
     }
 
