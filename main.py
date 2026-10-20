@@ -43,7 +43,7 @@ def generate_response(user_message, information, api_key):
 
     return(response.choices[0].message.content)
 
-SEARCH_KNOWLEDGE_BASE_TOOL = {
+SEARCH_KNOWLEDGE_BASE_TOOL = { #工具的定义，告诉模型可以调用这个工具
     "type": "function",
     "function": {
         "name": "search_knowledge_base",
@@ -67,7 +67,21 @@ SEARCH_KNOWLEDGE_BASE_TOOL = {
         },
     },
 }
+SEARCH_LIST_BASE_TOOL = {
+    "type":"function",
+    "function":{
+        "name":"search_list_base",
+        "description":"检索知识库，返回本地知识库的所有来源文件列表。",
+        "parameters":{
+            #无参数
+            "type":"object",
+            "properties":{},
+            "required":[],
+            "additionalProperties": False,
+        },
+    },
 
+}
 
 def search_knowledge_base(query: str, top_k: int = 3) -> list[dict]:
     """执行知识库检索，返回文本块和引用来源。"""
@@ -89,6 +103,20 @@ def search_knowledge_base(query: str, top_k: int = 3) -> list[dict]:
         for item in results
     ]
 
+def search_list_base() -> list[dict]:
+    """检索知识库，返回本地知识库的所有来源文件列表。"""
+    #得到data文件夹下的所有文件列表
+    folderpath = Path(__file__).parent / "data"
+    files = sorted(
+        (
+            file
+            for file in folderpath.iterdir()
+            if file.is_file() and file.suffix.lower() in {".txt", ".pdf"}
+        ),
+        key=lambda file: file.name.casefold(),
+    )
+
+    return [{"source": file.name} for file in files]
 
 def generate_rag_response(question: str, api_key: str) -> tuple[str, list[dict],list[dict]]:
     """让模型调用知识库检索工具，再根据检索结果生成回答。"""
@@ -103,13 +131,13 @@ def generate_rag_response(question: str, api_key: str) -> tuple[str, list[dict],
             "content": (
                 "你是一个基于本地资料回答问题的助手。"
                 "规则："
-                "不得仅凭模型已有知识回答这类问题。"
+                "不得仅凭模型已有知识回答问题。"
                 "用户询问本地资料中的事实、数据、观点或结论时，必须先调用本地资料检索工具。"
-                "询问本地资料中的具体内容时，调用 search_knowledge_base；"
+                "询问本地资料中的具体内容时，调用 search_knowledge_base或者search_list_base；"
                 "只有闲聊、改写、翻译等不需要资料的问题，才可以不调用检索工具。"
                 "如果使用检索资料回答，必须引用对应的 chunk_id；"
                 "不得编造检索结果或引用。"
-                "且一次最多发送两个 search_knowledge_base 工具调用请求"
+                "且一次最多发送两个工具调用请求"
             ),
         },
         {
@@ -122,7 +150,7 @@ def generate_rag_response(question: str, api_key: str) -> tuple[str, list[dict],
     first_response = client.chat.completions.create(
         model="deepseek-flash",
         messages=messages,
-        tools=[SEARCH_KNOWLEDGE_BASE_TOOL],#注册一个tool，告诉模型可以调用这个工具
+        tools=[SEARCH_KNOWLEDGE_BASE_TOOL, SEARCH_LIST_BASE_TOOL],#注册一个tool，告诉模型可以调用这个工具
         tool_choice='auto',#告诉模型可以选择调用这个工具
         # tool_choice={        #这次回答可以选择调用的工具，若有多个tool，模型可以选择调用其中一个或两个
         #     "type": "function",
@@ -132,10 +160,12 @@ def generate_rag_response(question: str, api_key: str) -> tuple[str, list[dict],
         extra_body={"thinking": {"type": "disabled"}},#关闭deepseek思考模式
     )
 
-    assistant_message = first_response.choices[0].message
-    tool_calls = assistant_message.tool_calls or []#工具调用请求,可能有多次。
+    assistant_message = first_response.choices[0].message#第一次回答的结果，可能包含tool调用请求，也可能没有
+    tool_calls = assistant_message.tool_calls or []#工具调用请求,在assistant_message.tool_calls中，可能有多次。
     
     if not tool_calls:#模型没有调用工具，直接返回回答。
+        if not assistant_message.content:
+            raise RuntimeError("模型没有返回回答。")
         return assistant_message.content, [], []  # 模型没有调用工具，直接返回回答。
     
     for call in tool_calls:
@@ -148,51 +178,87 @@ def generate_rag_response(question: str, api_key: str) -> tuple[str, list[dict],
 
     messages.append(assistant_message.model_dump(exclude_none=True))
     all_results = []
+    list_results = []
     tool_call_records = []#调用日志记录
 
     for tool_call in tool_calls:
-        if tool_call.function.name != "search_knowledge_base":
+        if tool_call.function.name == "search_knowledge_base":
+            # 处理 search_knowledge_base 工具调用
+            pass
+        elif tool_call.function.name == "search_list_base":
+            # 处理 search_list_base 工具调用
+            pass
+        else:
             raise RuntimeError(f"不支持的工具：{tool_call.function.name}")
 
         try:
-            arguments = json.loads(tool_call.function.arguments)
+            arguments = json.loads(tool_call.function.arguments)#得到模型调用工具的参数，json.loads()将字符串转换为Python对象
         except (TypeError, json.JSONDecodeError) as exc:
             raise ValueError("模型返回的工具参数不是有效 JSON。") from exc
 
         if not isinstance(arguments, dict):
             raise ValueError("模型返回的工具参数必须是 JSON 对象。")
+        
+        if tool_call.function.name == "search_knowledge_base":
+            if set(arguments) - {"query", "top_k"}:
+                raise ValueError("模型返回了不支持的工具参数。")
+            
+            query = arguments.get("query")#若模型返回空参数，query为None
+            top_k = arguments.get("top_k", 3)
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError("知识库搜索工具的 query 不能为空。")
+            if type(top_k) is not int or not 1 <= top_k <= 5:
+                raise ValueError("top_k 必须是 1 到 5 之间的整数。")
 
-        if set(arguments) - {"query", "top_k"}:
-            raise ValueError("模型返回了不支持的工具参数。")
+            print(f"模型调用chunks检索工具，query={query}, top_k={top_k}")
+            results = search_knowledge_base(query=query, top_k=top_k)#返回检索chunks结果
 
-        query = arguments.get("query")
-        top_k = arguments.get("top_k", 3)
-        print(f"模型调用检索工具，query={query}, top_k={top_k}")
-        # Python 执行工具；模型并没有直接执行 Python 函数。
-        results = search_knowledge_base(query=query, top_k=top_k)
-
-        # 将模型的工具调用和程序检索出的资料放进对话历史。
-        all_results.extend(results)
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(results, ensure_ascii=False),
-            }
-        )
-        tool_call_records.append(
-            {
-                "tool_call_id": tool_call.id,
-                "name": tool_call.function.name,
-                "arguments": {
-                    "query": query,
-                    "top_k": top_k,
-                },
-                "result_chunk_ids": [
-                    item["chunk_id"] for item in results
-                ],
-            }
-        )
+            # 将模型的工具调用和程序检索出的资料放进对话历史。
+            all_results.extend(results)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(results, ensure_ascii=False),
+                }
+            )
+            tool_call_records.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": {
+                        "query": query,
+                        "top_k": top_k,
+                    },
+                    "result_chunk_ids": [
+                        item["chunk_id"] for item in results
+                    ],
+                }
+            )
+        if tool_call.function.name == "search_list_base":
+            if arguments:
+                raise ValueError("目录列表工具不接受参数。")
+            print(f"模型调用目录检索工具，返回本地知识库的所有来源文件列表。")
+            if not list_results:
+                list_results: list[dict] = search_list_base()#返回检索列表结果
+            # 将模型的工具调用和程序检索出的资料放进对话历史。
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(list_results, ensure_ascii=False),
+                }
+            )
+            tool_call_records.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": {},
+                    "list_results": [
+                        item["source"] for item in list_results
+                    ],
+                }
+            )
     # 第二次请求：模型根据检索资料生成最终回答。没有设置tools参数，模型不能再调用工具。
     final_response = client.chat.completions.create(
         model="deepseek-flash",
