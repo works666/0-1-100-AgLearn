@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel,field_validator
-from main import generate_rag_response
+# from main import generate_rag_response
 # from pathlib import Path
-from vector_search import load_vector_index, retrieve
-from dotenv import load_dotenv
-import os
+from vector_search import load_vector_index # , retrieve
+# from dotenv import load_dotenv
+# import os
+from agent_graph import LangGraph_run
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -16,6 +17,7 @@ app = FastAPI(lifespan=lifespan)
 
 class AskRequest(BaseModel):
     question: str
+    expected_tools: list[str] | None = None #传入数据为 ["search_knowledge_base"]或者["search_list_base"]，不传参默认为None，不进行tool匹配确认
 
     @field_validator('question')#要检验的值，自动调用下面的函数
     @classmethod
@@ -31,23 +33,15 @@ def health_check():
 
 @app.post("/ask")
 def ask(request: AskRequest):
-    load_dotenv()#将.env文件中的环境变量加载到系统环境变量中，不会覆盖已经存在的环境变量
-    api_key = os.environ.get("DEEPSEEK_KEY")
-    if not api_key or not api_key.strip():
-        return {
-            "message": "DEEPSEEK_KEY is missing. Add it to the project .env file.",
-            "answer": None,
-            "sources": [],
-        }
-   
     try:
-        answer, results,tool_call_records = generate_rag_response(request.question, api_key)
-    except Exception as e:
-        return {
-            "message": f"Tool Calling 问答过程中发生错误: {e}",
-            "answer": None,
-            "sources": [],
-        }
+        state = LangGraph_run(request.question,request.expected_tools)
+    except Exception as exc:
+        raise HTTPException(
+        status_code=500,
+        detail=f"Agent运行失败: {exc}",
+    ) from exc
+
+    results = state["results"]
     sources = [
         {
             "chunk_id": item["chunk_id"],
@@ -58,8 +52,9 @@ def ask(request: AskRequest):
         ]
     return {
         "message": "成功获取回答。",
-        "answer": answer,
+        "answer": state["answer"],
         "sources": sources,
-        "tool_calls": tool_call_records,
+        "tool_calls": state["tool_call_records"],
+        "mismatch" : state["selection_mismatch"],
     }
 

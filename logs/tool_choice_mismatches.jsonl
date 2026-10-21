@@ -1,0 +1,4 @@
+{"timestamp": "2026-10-21T13:07:21.431413+00:00", "question": "你好", "expected_tools": ["string"], "actual_tool_calls": [], "answer": "你好！我是你的资料检索助手，可以帮你查询本地资料中的事实、数据、观点或结论。有什么想了解的问题，随时告诉我～"}
+{"timestamp": "2026-10-21T13:34:08.247902+00:00", "question": "你好", "expected_tools": [""], "actual_tool_calls": [], "answer": "你好！我是本地资料问答助手，可以帮你检索和回答资料中的内容。请问你想了解什么？"}
+{"timestamp": "2026-10-21T13:34:28.687150+00:00", "question": "你好", "expected_tools": [" "], "actual_tool_calls": [], "answer": "你好！我是本地资料问答助手，可以帮你查询知识库中的内容。有什么问题尽管问我，我会先检索本地资料再回答。"}
+{"timestamp": "2026-10-21T13:35:21.059062+00:00", "question": "你好", "expected_tools": ["None"], "actual_tool_calls": [], "answer": "你好！我是本地资料问答助手。如果你有关于本地资料中的事实、数据或观点想了解，随时告诉我，我会先检索资料再回答你。"}
