@@ -1,24 +1,34 @@
-# 文档问答与检索 API
+# 本地文档问答与检索 API
 
-本项目使用 Python、FastAPI、Sentence Transformers 和 DeepSeek API 构建基于本地资料的问答服务。服务将 TXT/PDF 文档切分为文本块、生成向量；收到问题后检索相关文本块，再将检索内容交给 DeepSeek 生成回答，并返回来源信息。
+一个使用 Python、FastAPI、LangGraph 和 DeepSeek API 构建的本地文档问答示例项目。项目支持读取 TXT/PDF 资料、切分文本、生成向量索引，并通过语义检索为问题提供相关资料和来源。
 
-## 功能
+## 功能特性
 
-- 从 `data` 目录读取 TXT 和 PDF 文档，并按文本块保存文件名、页码和 `chunk_id`。
-- 使用 `BAAI/bge-small-zh-v1.5` 生成文本向量，并进行向量相似度检索。
-- 通过 FastAPI 提供健康检查和问答接口。
-- 问答响应将 `chunk_id`、文件名和页码作为独立来源字段返回。
-- 保留 `main.py` 的命令行关键词搜索问答入口。
+- 从 `data/` 读取 UTF-8 TXT 和 PDF 文档，并保留来源文件名、PDF 页码及文本块 ID。
+- 使用 `BAAI/bge-small-zh-v1.5` 生成归一化向量，通过余弦相似度检索相关文本。
+- 使用 LangGraph 编排 DeepSeek 模型与本地知识库检索工具。
+- 提供 FastAPI 健康检查和问答接口，响应中包含引用来源及工具调用记录。
+- 提供命令行入口，可按关键词搜索 TXT 资料并向 DeepSeek 提问。
+
+## 技术栈
+
+- Python 3.10+
+- FastAPI、Uvicorn、Pydantic
+- LangGraph、OpenAI Python SDK（通过 DeepSeek 兼容接口调用）
+- Sentence Transformers、`BAAI/bge-small-zh-v1.5`
+- pypdf
 
 ## 环境要求
 
 - Python 3.10 或更高版本
-- DeepSeek API Key（调用问答接口时需要）
-- 首次生成向量或启动 API 时，需要联网下载 `BAAI/bge-small-zh-v1.5` 模型
+- 用于问答生成的 DeepSeek API Key
+- 首次生成向量或启动 API 时可联网下载嵌入模型
 
-## 安装与配置
+## 安装
 
-在项目根目录运行：
+在项目根目录创建并激活虚拟环境，然后安装依赖。
+
+### Windows PowerShell
 
 ```powershell
 python -m venv .venv
@@ -26,17 +36,17 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-macOS/Linux 可使用以下虚拟环境激活命令：
+### macOS / Linux
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-将 `.env.example` 复制为 `.env`，并在 `.env` 中填写自己的密钥：
+## 配置 API Key
 
-```env
-DEEPSEEK_KEY=your-deepseek-api-key
-```
+复制示例环境变量文件，并在 `.env` 中填写自己的 DeepSeek API Key。
 
 Windows PowerShell：
 
@@ -44,36 +54,47 @@ Windows PowerShell：
 Copy-Item .env.example .env
 ```
 
-macOS/Linux：
+macOS / Linux：
 
 ```bash
 cp .env.example .env
 ```
 
-不要将 `.env` 或真实 API Key 提交到 Git。调用 DeepSeek API 可能产生费用，请留意服务商账户和计费设置。
+编辑 `.env`：
 
-## 添加资料与构建检索数据
+```env
+DEEPSEEK_KEY=your-deepseek-api-key
+```
 
-将 `.txt` 或 `.pdf` 文件放入项目根目录下的 `data` 文件夹。然后按顺序执行：
+请勿将 `.env`、真实 API Key 或其他凭据提交到 Git。调用 DeepSeek API 可能产生费用，请留意服务商账户和计费设置。
+
+## 添加资料并生成向量索引
+
+将 `.txt` 或 `.pdf` 文件放入项目根目录下的 `data/` 文件夹，然后在项目根目录依次执行：
 
 ```powershell
 python ingest_documents.py
 python embed_chunks.py
 ```
 
-第一步生成 `chunks.jsonl`，包含每个文本块的 `chunk_id`、文本、来源文件名和页码；TXT 的页码为 `null`。第二步生成 `chunks_with_embeddings.jsonl`，供 API 启动时加载和检索。
+macOS / Linux 使用相同命令。
 
-PDF 使用文本提取方式处理。扫描版 PDF 若没有可提取文本，需要先进行 OCR。每次增删或修改资料后，重新执行上述两个命令以更新检索数据。
+处理流程：
 
-## 启动 API 服务
+1. `ingest_documents.py` 读取资料并生成 `chunks.jsonl`。PDF 按页提取文本，TXT 的页码记为 `null`。
+2. `embed_chunks.py` 读取文本块并生成 `chunks_with_embeddings.jsonl`，供 API 启动时加载。
 
-确保已配置 `.env` 并生成 `chunks_with_embeddings.jsonl`，然后在项目根目录运行：
+每次添加、删除或修改资料后，都需要重新运行这两个脚本。扫描版 PDF 通常没有可提取文本，请先进行 OCR。生成向量需要下载嵌入模型，首次运行可能需要一些时间。
+
+## 启动 API
+
+请先配置 `.env` 并生成非空的 `chunks_with_embeddings.jsonl`，再运行：
 
 ```powershell
 python -m uvicorn api:app --reload
 ```
 
-服务默认运行在 `http://127.0.0.1:8000`。交互式 API 文档位于 `http://127.0.0.1:8000/docs`。
+服务默认地址为 <http://127.0.0.1:8000>，交互式 API 文档为 <http://127.0.0.1:8000/docs>。
 
 ### 健康检查
 
@@ -81,7 +102,7 @@ python -m uvicorn api:app --reload
 GET /health
 ```
 
-成功响应：
+响应：
 
 ```json
 {
@@ -89,7 +110,7 @@ GET /health
 }
 ```
 
-### 提问
+### 提交问题
 
 ```http
 POST /ask
@@ -100,9 +121,12 @@ Content-Type: application/json
 
 ```json
 {
-  "question": "低空经济中无人机农村配送面临哪些现实困境？"
+  "question": "无人机农村配送面临哪些现实困境？",
+  "expected_tools": ["search_knowledge_base"]
 }
 ```
+
+`expected_tools` 是可选字段，用于检查模型实际调用的工具；可用工具名为 `search_knowledge_base` 和 `search_list_base`。不传或设为 `null` 时不进行工具选择匹配检查。
 
 成功响应示例：
 
@@ -116,48 +140,110 @@ Content-Type: application/json
       "filename": "资料.pdf",
       "page": 2
     }
-  ]
+  ],
+  "tool_calls": [
+    {
+      "tool_call_id": "call_example",
+      "name": "search_knowledge_base",
+      "arguments": {
+        "query": "无人机农村配送",
+        "top_k": 3
+      },
+      "executed": true,
+      "result_chunk_ids": [1]
+    }
+  ],
+  "mismatch": false
 }
 ```
 
-`sources` 中每个来源是一个对象，包含 `chunk_id`、`filename` 和 `page`；TXT 来源的 `page` 为 `null`。问题不能为空。API 当前按相似度检索最多 3 个文本块。
+`sources` 只列出本次检索得到的文本块；TXT 来源的 `page` 为 `null`。`tool_calls` 记录工具调用情况；`mismatch` 在未传入 `expected_tools` 时为 `null`，传入时表示实际工具调用与预期是否不一致。知识库检索默认返回 3 个文本块，`top_k` 支持 1 至 5。
 
-也可以在 PowerShell 中调用：
+PowerShell 调用示例：
 
 ```powershell
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/ask `
   -ContentType "application/json" `
-  -Body '{"question":"低空经济中无人机农村配送面临哪些现实困境？"}'
+  -Body '{"question":"无人机农村配送面临哪些现实困境？"}'
 ```
 
-## 命令行入口
+### 错误响应
 
-`main.py` 仍提供基于关键词的命令行问答功能：
+- 问题为空或只包含空白字符时，接口返回请求校验错误。
+- 向量索引缺失或没有文本块时，API 无法完成启动；请先执行资料处理步骤。
+- Agent 或模型调用失败时，`/ask` 返回 HTTP 500，并在 `detail` 中提供错误信息。
+
+## 命令行工具
+
+### TXT 关键词搜索问答
 
 ```powershell
 python main.py
 ```
 
-按提示输入问题和搜索关键词。该入口使用 `KeyWord_Search.py` 在 `data` 目录的 TXT 文件中查找关键词，再将搜索结果发送给 DeepSeek。
+根据提示输入问题和关键词。该入口在 `data/` 中搜索 TXT 文件内容，再将匹配结果发送给 DeepSeek。
 
-## 主要文件
+### 单独搜索关键词
 
-| 文件 | 说明 |
-| --- | --- |
-| `api.py` | FastAPI 应用、健康检查和问答接口 |
-| `vector_search.py` | 加载向量索引并检索相关文本块 |
-| `ingest_documents.py` | 提取 TXT/PDF 文本并切分文本块 |
-| `embed_chunks.py` | 为文本块生成向量 |
-| `main.py` | DeepSeek 调用及命令行问答入口 |
-| `KeyWord_Search.py` | 命令行入口使用的 TXT 关键词搜索 |
-| `data/` | 待处理的 TXT/PDF 资料 |
-| `chunks.jsonl` | 文本切分结果 |
-| `chunks_with_embeddings.jsonl` | 带向量的检索索引数据 |
+```powershell
+python KeyWord_Search.py
+```
 
-## 注意事项
+输入关键词后，程序会打印 `data/` 下 TXT 文件中的匹配行。
 
-- API 启动时会加载向量索引和嵌入模型；如果索引文件缺失或为空，服务启动会失败。
-- `chunks_with_embeddings.jsonl` 可能较大。若不提交该生成文件，部署前需先运行文档切分和向量生成步骤。
-- `.env` 含有密钥，不应提交、公开或分享。
+### 测试向量检索
+
+```powershell
+python search_chunks.py
+```
+
+输入问题后，程序打印最相关的 3 个文本块及相似度。
+
+## 项目结构
+
+```text
+.
+├── data/                          # 输入资料（TXT/PDF）
+├── agent_graph.py                 # LangGraph Agent 与工具调用流程
+├── api.py                         # FastAPI 应用与 API 路由
+├── embed_chunks.py                # 文本块向量化
+├── ingest_documents.py            # TXT/PDF 提取、清理与切分
+├── KeyWord_Search.py              # TXT 关键词搜索
+├── main.py                        # DeepSeek 调用和命令行问答
+├── search_chunks.py               # 命令行向量检索
+├── vector_search.py               # 加载索引和语义检索
+├── requirements.txt               # Python 依赖
+├── .env.example                   # 环境变量示例
+├── chunks.jsonl                   # 生成的文本块数据
+└── chunks_with_embeddings.jsonl   # 生成的向量索引
+```
+
+`embed_test.py`、`test.py` 为项目中的测试/实验脚本。`logs/tool_choice_mismatches.jsonl` 用于记录工具选择与预期不一致的情况。
+
+## 常见问题
+
+### 找不到 `DEEPSEEK_KEY`
+
+确认项目根目录存在 `.env`，且其中配置了有效的 `DEEPSEEK_KEY`。不要将密钥直接写入代码或提交到仓库。
+
+### 找不到向量索引或索引为空
+
+确认 `data/` 中至少有一个包含可提取文本的 TXT/PDF 文件，并依次运行 `python ingest_documents.py` 和 `python embed_chunks.py`。
+
+### PDF 未提取到文字
+
+扫描版 PDF 需要先进行 OCR，再将可搜索的 PDF 放入 `data/`。
+
+### 首次运行较慢
+
+Sentence Transformers 首次运行需要下载 `BAAI/bge-small-zh-v1.5` 模型。请确保网络可用，并等待模型下载和加载完成。
+
+## 贡献
+
+欢迎通过 GitHub Issues 报告问题，或提交 Pull Request。提交前请说明改动目的及验证方式；涉及功能变更时，建议同时补充相应测试和文档。
+
+## 许可证
+
+当前仓库未声明开源许可证。添加许可证前，代码的使用、修改和再分发权限应以仓库所有者的授权为准。
