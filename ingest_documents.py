@@ -1,3 +1,6 @@
+'''
+解析分割txt/PDF文本，分成多个语义块并进行简单的数据清洗，结果放在chunks.jsonl。
+'''
 import json
 from pathlib import Path
 from typing import Any

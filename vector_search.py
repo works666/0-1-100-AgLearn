@@ -1,3 +1,8 @@
+'''
+为问题生成向量，在chunks_with_embeddings与文本块向量计算相似度，
+然后返回最相关的 top_k 条结果，包含文本、来源、页码和相似度分数。
+'''
+
 import json
 from pathlib import Path
 

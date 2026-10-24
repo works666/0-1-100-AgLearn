@@ -1,3 +1,6 @@
+'''
+为语义块生成相关向量，结果放在chunks_with_embeddings文件夹
+'''
 import json
 from pathlib import Path
 

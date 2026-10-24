@@ -3,3 +3,8 @@
 .git
 __pycache__
 *.py[cod]
+data/
+chunks.jsonl
+chunks_with_embeddings.jsonl
+logs/
+tests/

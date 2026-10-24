@@ -6,3 +6,4 @@ uvicorn[standard]
 pypdf
 sentence-transformers
 langgraph
+mcp[cli]
