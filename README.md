@@ -9,6 +9,7 @@
 - 使用 LangGraph 编排 DeepSeek 模型与本地知识库检索工具。
 - 提供 FastAPI 健康检查和问答接口，响应中包含引用来源及工具调用记录。
 - 通过 MCP stdio 服务提供本地知识库检索和资料列表工具；FastAPI 进程启动时建立客户端连接并在服务期间复用。
+- 通过 SQLite checkpoint 保存多轮会话；每次请求返回或接受 `conversation_id` 以继续对话。
 
 ## 技术栈
 
@@ -96,6 +97,8 @@ python -m uvicorn api:app --reload
 
 服务默认地址为 <http://127.0.0.1:8000>，交互式 API 文档为 <http://127.0.0.1:8000/docs>。
 
+默认情况下，会话数据库位于项目根目录的 `checkpoints.sqlite`。可以通过环境变量 `CHECKPOINT_DB_PATH` 修改数据库文件位置。
+
 ## 使用 Docker 启动
 
 需要先安装并启动 Docker。Docker 镜像不包含个人资料、API 密钥或生成的向量索引；启动容器时会从挂载的 `data/` 读取 TXT/PDF，生成文本块和向量索引，再启动 API。首次启动需要联网下载嵌入模型，初始化完成后可访问 <http://127.0.0.1:8000/docs>。
@@ -106,7 +109,7 @@ python -m uvicorn api:app --reload
 docker build -t aglearn:local .
 ```
 
-启动前请将至少一个可提取文本的 `.txt` 或 `.pdf` 文件放入 `data/`，并在项目根目录准备好配置了 `DEEPSEEK_KEY` 的 `.env` 文件。
+启动前请将至少一个可提取文本的 `.txt` 或 `.pdf` 文件放入 `data/`，并在项目根目录准备好配置了 `DEEPSEEK_KEY` 的 `.env` 文件。会话 checkpoint 存在容器内的 `/app/state/checkpoints.sqlite`，通过 Docker 命名卷持久化。
 
 ### Windows PowerShell
 
@@ -115,6 +118,7 @@ docker run --rm -p 8000:8000 `
   --env-file .env `
   --mount "type=bind,source=$((Resolve-Path .\data).Path),target=/app/data,readonly" `
   --mount "type=volume,source=aglearn-hf-cache,target=/root/.cache/huggingface" `
+  --mount "type=volume,source=aglearn-state,target=/app/state" `
   aglearn:local
 ```
 
@@ -125,10 +129,11 @@ docker run --rm -p 8000:8000 \
   --env-file .env \
   --mount "type=bind,source=$(pwd)/data,target=/app/data,readonly" \
   --mount "type=volume,source=aglearn-hf-cache,target=/root/.cache/huggingface" \
+  --mount "type=volume,source=aglearn-state,target=/app/state" \
   aglearn:local
 ```
 
-资料目录以只读方式挂载；生成的索引保存在容器内。每次启动都会根据挂载的资料重新生成索引。Hugging Face 缓存使用 Docker 命名卷保留，避免每次启动都重新下载嵌入模型。资料或 API Key 不会被打包进镜像。
+资料目录以只读方式挂载；生成的索引保存在容器内。每次启动都会根据挂载的资料重新生成索引。Hugging Face 缓存和 SQLite 会话数据库使用 Docker 命名卷保留，避免容器移除后丢失会话或重复下载嵌入模型。资料或 API Key 不会被打包进镜像。
 
 ### MCP 服务与客户端
 
@@ -136,7 +141,7 @@ docker run --rm -p 8000:8000 \
 
 - `mcp_server.py` 是 MCP 服务端，以 stdio 方式运行，注册 `search_knowledge_base` 和 `search_list_base` 两个工具。服务端启动时调用 `load_vector_index()`，将向量索引加载到 MCP 子进程中；实际检索也在这个进程中执行。
 - `api.py` 是 MCP 客户端的宿主。FastAPI lifespan 启动时会启动 `mcp_server.py` 子进程、建立 MCP 客户端连接，并通过 `list_tools()` 获取工具定义。
-- 每个 FastAPI 进程在整个服务运行期间复用同一个 MCP 客户端连接和已获取的工具列表。每次 `/ask` 请求将它们传给 `LangGraph_run`，由 Agent 通过该客户端调用 MCP 工具；不会为每个请求重新启动 MCP 服务或重新连接。
+- 每个 FastAPI 进程在整个服务运行期间复用同一个 MCP 客户端连接和已获取的工具列表。Agent 图、模型客户端和 SQLite checkpointer 也在 lifespan 中初始化并复用；不会为每个请求重新连接数据库或重新编译图。
 - FastAPI 关闭时，lifespan 退出 MCP 客户端上下文，连接随之关闭，服务端子进程也结束。
 
 因此，向量索引由 MCP 子进程加载，FastAPI API 进程本身不再加载一份向量索引。使用多个 Uvicorn worker 时，每个 worker 都有自己的 MCP 子进程和客户端连接。
@@ -171,13 +176,14 @@ Content-Type: application/json
 }
 ```
 
-`expected_tools` 是可选字段，用于检查模型实际调用的工具；可用工具名为 `search_knowledge_base` 和 `search_list_base`。不传或设为 `null` 时不进行工具选择匹配检查。
+`expected_tools` 是可选字段，用于检查模型实际调用的工具；可用工具名为 `search_knowledge_base` 和 `search_list_base`。不传或设为 `null` 时不进行工具选择匹配检查。`conversation_id` 也是可选字段；首次请求省略它时，服务会生成新的 ID 并在响应中返回。
 
 成功响应示例：
 
 ```json
 {
   "message": "成功获取回答。",
+  "conversation_id": "4f13f6f8-1eea-44ae-9e31-27d21faf08d9",
   "answer": "根据检索资料……",
   "sources": [
     {
@@ -203,6 +209,56 @@ Content-Type: application/json
 ```
 
 `sources` 只列出本次检索得到的文本块；TXT 来源的 `page` 为 `null`。`tool_calls` 记录工具调用情况；`mismatch` 在未传入 `expected_tools` 时为 `null`，传入时表示实际工具调用与预期是否不一致。知识库检索默认返回 3 个文本块，`top_k` 支持 1 至 5。
+
+### 多轮对话
+
+第一次请求不必提供 `conversation_id`：
+
+```json
+{
+  "question": "无人机农村配送面临哪些现实困境？"
+}
+```
+
+从响应中复制 `conversation_id`，后续请求携带相同 ID。服务会从 SQLite checkpoint 恢复该会话的消息历史：
+
+```json
+{
+  "question": "你刚才提到的第二点是什么意思？",
+  "conversation_id": "4f13f6f8-1eea-44ae-9e31-27d21faf08d9"
+}
+```
+
+不同的 `conversation_id` 是不同会话；新会话可省略 ID。模型每次最多接收最近 6 轮消息，但 SQLite checkpoint 仍保留完整消息历史。当前 `sources` 和 `tool_calls` 只对应本轮请求，不会混入此前轮次的结果。
+
+### 查看和删除会话
+
+SQLite 文件位置：
+
+- 本地运行：项目根目录 `checkpoints.sqlite`；也可以设置 `CHECKPOINT_DB_PATH` 指定其他位置。
+- Docker：容器内 `/app/state/checkpoints.sqlite`，宿主机数据由 `aglearn-state` Docker 命名卷持久化。
+
+删除单个会话可调用：
+
+```http
+DELETE /conversations/{conversation_id}
+```
+
+例如，在 PowerShell 中：
+
+```powershell
+Invoke-RestMethod `
+  -Method Delete `
+  -Uri "http://127.0.0.1:8000/conversations/4f13f6f8-1eea-44ae-9e31-27d21faf08d9"
+```
+
+删除全部会话时，先停止服务。本地运行可删除 `checkpoints.sqlite`，以及存在时的 `checkpoints.sqlite-wal` 和 `checkpoints.sqlite-shm`。Docker 中删除容器不会删除命名卷；确认不再需要其中的会话后，删除该卷：
+
+```bash
+docker volume rm aglearn-state
+```
+
+这会永久删除该卷中的所有会话数据。重新启动容器时 Docker 会创建空卷和新的 SQLite 数据库。
 
 PowerShell 调用示例：
 

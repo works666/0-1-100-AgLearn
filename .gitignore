@@ -8,3 +8,7 @@ logs/
 /data/*
 !/data/README.md
 tests/
+checkpoints/
+/checkpoints.sqlite
+/checkpoints.sqlite-wal
+/checkpoints.sqlite-shm
